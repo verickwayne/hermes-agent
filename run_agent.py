@@ -1618,6 +1618,11 @@ class AIAgent:
                     )
                     if _auth_info.get("detail"):
                         print(f"🔐 Anthropic credential note: {_auth_info['detail']}")
+                    if getattr(self._anthropic_client, "_hermes_routing_debug_enabled", False):
+                        _transport_name = getattr(self._anthropic_client, "_hermes_transport_name", "sdk-default")
+                        print(f"🧭 Anthropic routing debug enabled")
+                        print(f"🧭 Anthropic transport: {_transport_name}")
+                        print(f"🧭 Anthropic endpoint: {self._anthropic_base_url or 'https://api.anthropic.com'}")
                     if effective_key and len(effective_key) > 12:
                         print(f"🔑 Using token: {effective_key[:8]}...{effective_key[-4:]}")
         elif self.api_mode == "bedrock_converse":

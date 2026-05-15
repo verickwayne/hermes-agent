@@ -55,6 +55,11 @@ def _get_anthropic_sdk():
 
 logger = logging.getLogger(__name__)
 
+def _anthropic_routing_debug_enabled() -> bool:
+    value = os.getenv("HERMES_ANTHROPIC_ROUTING_DEBUG", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 THINKING_BUDGET = {"xhigh": 32000, "high": 16000, "medium": 8000, "low": 4000}
 # Hermes effort → Anthropic adaptive-thinking effort (output_config.effort).
 # Anthropic exposes 5 levels on 4.7+: low, medium, high, xhigh, max.
@@ -561,6 +566,7 @@ def build_anthropic_client(
     kwargs = {
         "timeout": Timeout(timeout=float(_read_timeout), connect=10.0),
     }
+    transport_name = "sdk-default"
     if normalized_base_url:
         # Azure Anthropic endpoints require an ``api-version`` query parameter.
         # Pass it via default_query so the SDK appends it to every request URL
@@ -679,11 +685,15 @@ def build_anthropic_client(
             )
             if _imp_client is not None:
                 kwargs["http_client"] = _imp_client
+                transport_name = getattr(_imp_client, "_hermes_transport_name", "curl_cffi(chrome131)")
                 logger.debug(
                     "Anthropic OAuth: routing via curl_cffi (impersonate=chrome131) "
                     "for wire-fingerprint spoof"
                 )
+            else:
+                transport_name = "httpx-default"
         except Exception as exc:
+            transport_name = "httpx-default"
             logger.warning(
                 "curl_cffi transport setup failed (%s); falling back to default httpx",
                 exc,
@@ -694,7 +704,10 @@ def build_anthropic_client(
         if common_betas:
             kwargs["default_headers"] = {"anthropic-beta": ",".join(common_betas)}
 
-    return _anthropic_sdk.Anthropic(**kwargs)
+    client = _anthropic_sdk.Anthropic(**kwargs)
+    setattr(client, "_hermes_transport_name", transport_name)
+    setattr(client, "_hermes_routing_debug_enabled", _anthropic_routing_debug_enabled())
+    return client
 
 
 def build_anthropic_bedrock_client(region: str):

@@ -51,12 +51,15 @@ Caveats:
 
 from __future__ import annotations
 
+import os
+import re
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
+_ROUTING_DEBUG_ENV_VAR = "HERMES_ANTHROPIC_ROUTING_DEBUG"
 
 
 def _curl_cffi_available() -> bool:
@@ -65,6 +68,112 @@ def _curl_cffi_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def _routing_debug_enabled() -> bool:
+    value = os.getenv(_ROUTING_DEBUG_ENV_VAR, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _routing_debug_print(message: str) -> None:
+    print(f"🧭 Anthropic routing debug: {message}", flush=True)
+
+
+def _header_debug_value(value: Any) -> str:
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
+def _extract_first_system_block_text(payload: dict) -> Optional[str]:
+    system_field = payload.get("system")
+    if isinstance(system_field, str):
+        return system_field
+    if isinstance(system_field, list) and system_field:
+        first = system_field[0]
+        if isinstance(first, dict) and first.get("type") == "text":
+            text = first.get("text")
+            if isinstance(text, str):
+                return text
+    return None
+
+
+def _build_unredacted_routing_debug_info(
+    *,
+    request_url: str,
+    headers: dict,
+    original_body: bytes,
+    final_body: bytes,
+    transport: str,
+) -> dict:
+    import json
+
+    info = {
+        "request_url": request_url,
+        "transport": transport,
+        "headers": {k: _header_debug_value(v) for k, v in headers.items()},
+        "messages_count": None,
+        "system_block_count": None,
+        "attribution_injected": False,
+        "first_system_block": None,
+        "cch": None,
+        "cch_replaced": False,
+    }
+
+    try:
+        original_payload = json.loads(original_body)
+        if isinstance(original_payload, dict):
+            messages = original_payload.get("messages")
+            if isinstance(messages, list):
+                info["messages_count"] = len(messages)
+    except (TypeError, json.JSONDecodeError, UnicodeDecodeError):
+        pass
+
+    try:
+        final_payload = json.loads(final_body)
+    except (TypeError, json.JSONDecodeError, UnicodeDecodeError):
+        return info
+
+    if not isinstance(final_payload, dict):
+        return info
+
+    system_field = final_payload.get("system")
+    if isinstance(system_field, list):
+        info["system_block_count"] = len(system_field)
+    elif isinstance(system_field, str):
+        info["system_block_count"] = 1
+
+    first_system_block = _extract_first_system_block_text(final_payload)
+    if first_system_block and first_system_block.startswith("x-anthropic-billing-header: "):
+        info["attribution_injected"] = True
+        info["first_system_block"] = first_system_block
+        match = re.search(r"cch=([0-9a-f]{5})", first_system_block)
+        if match:
+            info["cch"] = match.group(1)
+            info["cch_replaced"] = match.group(1) != "00000"
+
+    return info
+
+
+def _emit_unredacted_routing_debug(info: dict) -> None:
+    import json
+
+    _routing_debug_print(f"transport={info['transport']} endpoint={info['request_url']}")
+    _routing_debug_print(f"headers={json.dumps(info['headers'], sort_keys=True)}")
+    _routing_debug_print(
+        f"messages_count={info['messages_count']} system_block_count={info['system_block_count']}"
+    )
+    _routing_debug_print(
+        "attribution_injected="
+        + ("yes" if info["attribution_injected"] else "no")
+        + " cch_replaced="
+        + ("yes" if info["cch_replaced"] else "no")
+        + f" cch={info['cch']}"
+    )
+    if info["first_system_block"] is not None:
+        _routing_debug_print(f"first_system_block={info['first_system_block']}")
+    else:
+        _routing_debug_print("first_system_block=<missing-or-non-attribution>")
 
 
 # Real Claude Code prepends an attribution string to every /v1/messages
@@ -293,6 +402,7 @@ class CurlCffiTransport(httpx.BaseTransport):
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         body = request.read()
+        original_body = body
         # Inject the Claude Code billing-header attribution on /v1/messages
         # so Anthropic's routing layer classifies the OAuth call as
         # first-party Claude Code (→ included quota) instead of third-party
@@ -303,6 +413,16 @@ class CurlCffiTransport(httpx.BaseTransport):
         # Content-Length will be recomputed by curl_cffi; drop the stale one
         headers.pop("content-length", None)
         headers.pop("Content-Length", None)
+        if _routing_debug_enabled() and request.url.path.endswith("/v1/messages"):
+            _emit_unredacted_routing_debug(
+                _build_unredacted_routing_debug_info(
+                    request_url=str(request.url),
+                    headers=headers,
+                    original_body=original_body,
+                    final_body=body,
+                    transport=f"curl_cffi({self._impersonate})",
+                )
+            )
         with self._session_cls() as session:
             cc_response = session.request(
                 method=request.method,
@@ -346,11 +466,22 @@ class AsyncCurlCffiTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         body = await request.aread()
+        original_body = body
         if request.url.path.endswith("/v1/messages") and body:
             body = _inject_billing_attribution(body)
         headers = _scrub_request_headers(dict(request.headers))
         headers.pop("content-length", None)
         headers.pop("Content-Length", None)
+        if _routing_debug_enabled() and request.url.path.endswith("/v1/messages"):
+            _emit_unredacted_routing_debug(
+                _build_unredacted_routing_debug_info(
+                    request_url=str(request.url),
+                    headers=headers,
+                    original_body=original_body,
+                    final_body=body,
+                    transport=f"curl_cffi({self._impersonate})",
+                )
+            )
         async with self._session_cls() as session:
             cc_response = await session.request(
                 method=request.method,
@@ -403,11 +534,15 @@ def build_impersonating_http_client(
     timeout_obj = httpx.Timeout(timeout=timeout, connect=10.0)
 
     if async_mode:
-        return httpx.AsyncClient(
+        client = httpx.AsyncClient(
             transport=AsyncCurlCffiTransport(impersonate=impersonate),
             timeout=timeout_obj,
         )
-    return httpx.Client(
+        setattr(client, "_hermes_transport_name", f"curl_cffi({impersonate})")
+        return client
+    client = httpx.Client(
         transport=CurlCffiTransport(impersonate=impersonate),
         timeout=timeout_obj,
     )
+    setattr(client, "_hermes_transport_name", f"curl_cffi({impersonate})")
+    return client
