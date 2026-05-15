@@ -60,6 +60,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 _ROUTING_DEBUG_ENV_VAR = "HERMES_ANTHROPIC_ROUTING_DEBUG"
+_ROUTING_DEBUG_LOG_ENV_VAR = "HERMES_ANTHROPIC_ROUTING_DEBUG_FILE"
+_DEFAULT_ROUTING_DEBUG_LOG_PATH = "/tmp/hermes-anthropic-routing.log"
 
 
 def _curl_cffi_available() -> bool:
@@ -75,8 +77,19 @@ def _routing_debug_enabled() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _routing_debug_print(message: str) -> None:
-    print(f"🧭 Anthropic routing debug: {message}", flush=True)
+def _routing_debug_log_path() -> str:
+    path = os.getenv(_ROUTING_DEBUG_LOG_ENV_VAR, "").strip()
+    return path or _DEFAULT_ROUTING_DEBUG_LOG_PATH
+
+
+def emit_anthropic_routing_debug(message: str) -> None:
+    line = f"🧭 Anthropic routing debug: {message}"
+    print(line, flush=True)
+    try:
+        with open(_routing_debug_log_path(), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError as exc:
+        logger.warning("Failed to write Anthropic routing debug log: %s", exc)
 
 
 def _header_debug_value(value: Any) -> str:
@@ -158,12 +171,12 @@ def _build_unredacted_routing_debug_info(
 def _emit_unredacted_routing_debug(info: dict) -> None:
     import json
 
-    _routing_debug_print(f"transport={info['transport']} endpoint={info['request_url']}")
-    _routing_debug_print(f"headers={json.dumps(info['headers'], sort_keys=True)}")
-    _routing_debug_print(
+    emit_anthropic_routing_debug(f"transport={info['transport']} endpoint={info['request_url']}")
+    emit_anthropic_routing_debug(f"headers={json.dumps(info['headers'], sort_keys=True)}")
+    emit_anthropic_routing_debug(
         f"messages_count={info['messages_count']} system_block_count={info['system_block_count']}"
     )
-    _routing_debug_print(
+    emit_anthropic_routing_debug(
         "attribution_injected="
         + ("yes" if info["attribution_injected"] else "no")
         + " cch_replaced="
@@ -171,9 +184,9 @@ def _emit_unredacted_routing_debug(info: dict) -> None:
         + f" cch={info['cch']}"
     )
     if info["first_system_block"] is not None:
-        _routing_debug_print(f"first_system_block={info['first_system_block']}")
+        emit_anthropic_routing_debug(f"first_system_block={info['first_system_block']}")
     else:
-        _routing_debug_print("first_system_block=<missing-or-non-attribution>")
+        emit_anthropic_routing_debug("first_system_block=<missing-or-non-attribution>")
 
 
 # Real Claude Code prepends an attribution string to every /v1/messages

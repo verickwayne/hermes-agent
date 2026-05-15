@@ -3,6 +3,8 @@ import json
 from agent.curl_cffi_transport import (
     _build_unredacted_routing_debug_info,
     _inject_billing_attribution,
+    _routing_debug_log_path,
+    emit_anthropic_routing_debug,
 )
 
 
@@ -61,3 +63,15 @@ def test_routing_debug_info_ignores_non_attribution_system_block():
     assert info["first_system_block"] is None
     assert info["cch"] is None
     assert info["cch_replaced"] is False
+
+
+def test_emit_anthropic_routing_debug_writes_default_or_overridden_log(tmp_path, monkeypatch, capsys):
+    log_path = tmp_path / "routing.log"
+    monkeypatch.setenv("HERMES_ANTHROPIC_ROUTING_DEBUG_FILE", str(log_path))
+
+    emit_anthropic_routing_debug("transport=curl_cffi(chrome131)")
+
+    captured = capsys.readouterr()
+    assert "transport=curl_cffi(chrome131)" in captured.out
+    assert _routing_debug_log_path() == str(log_path)
+    assert "transport=curl_cffi(chrome131)" in log_path.read_text(encoding="utf-8")
