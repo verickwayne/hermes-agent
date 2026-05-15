@@ -256,11 +256,16 @@ const cleanPromptSymbol = (s: string | undefined, fallback: string) => {
 
 export const DARK_THEME: Theme = {
   color: {
-    primary: '#FFD700',
-    accent: '#FFBF00',
-    border: '#CD7F32',
+    // PATCHED: red palette signals this is the custom Hermes build with
+    // the Anthropic OAuth/subscription routing patches applied.  If you
+    // see yellow/orange, you're on the stock build (the patches aren't
+    // active).  Revert these three to #FFD700/#FFBF00/#CD7F32 to restore
+    // the stock theme.
+    primary: '#FF1A1A',
+    accent: '#DC143C',
+    border: '#8B0000',
     text: '#FFF8DC',
-    muted: '#CC9B1F',
+    muted: '#A03030',
     // Bumped from the old `#B8860B` darkgoldenrod (~53% luminance) which
     // read as barely-visible on dark terminals for long body text.  The
     // new value sits ~60% luminance — readable without losing the "muted /

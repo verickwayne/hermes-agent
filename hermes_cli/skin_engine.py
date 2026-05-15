@@ -166,19 +166,24 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "name": "default",
         "description": "Classic Hermes — gold and kawaii",
         "colors": {
-            "banner_border": "#CD7F32",
-            "banner_title": "#FFD700",
-            "banner_accent": "#FFBF00",
-            "banner_dim": "#B8860B",
+            # PATCHED: red palette signals patched Hermes build (OAuth +
+            # Stainless-header spoofing for Anthropic subscription billing).
+            # Revert banner_border/title/accent/dim + ui_accent + input_rule
+            # + response_border to #CD7F32/#FFD700/#FFBF00/#B8860B/#FFBF00/
+            # #CD7F32/#FFD700 to restore the stock gold palette.
+            "banner_border": "#8B0000",
+            "banner_title": "#FF1A1A",
+            "banner_accent": "#DC143C",
+            "banner_dim": "#A03030",
             "banner_text": "#FFF8DC",
-            "ui_accent": "#FFBF00",
+            "ui_accent": "#DC143C",
             "ui_label": "#DAA520",
             "ui_ok": "#4caf50",
             "ui_error": "#ef5350",
             "ui_warn": "#ffa726",
             "prompt": "#FFF8DC",
-            "input_rule": "#CD7F32",
-            "response_border": "#FFD700",
+            "input_rule": "#8B0000",
+            "response_border": "#FF1A1A",
             "status_bar_bg": "#1a1a2e",
             "session_label": "#DAA520",
             "session_border": "#8B8682",
@@ -201,27 +206,27 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "description": "War-god theme — crimson and bronze",
         "colors": {
             "banner_border": "#9F1C1C",
-            "banner_title": "#C7A96B",
+            "banner_title": "#C73C3C",
             "banner_accent": "#DD4A3A",
             "banner_dim": "#6B1717",
             "banner_text": "#F1E6CF",
             "ui_accent": "#DD4A3A",
-            "ui_label": "#C7A96B",
+            "ui_label": "#C73C3C",
             "ui_ok": "#4caf50",
             "ui_error": "#ef5350",
             "ui_warn": "#ffa726",
             "prompt": "#F1E6CF",
             "input_rule": "#9F1C1C",
-            "response_border": "#C7A96B",
+            "response_border": "#C73C3C",
             "status_bar_bg": "#2A1212",
             "status_bar_text": "#F1E6CF",
-            "status_bar_strong": "#C7A96B",
+            "status_bar_strong": "#C73C3C",
             "status_bar_dim": "#6E584B",
             "status_bar_good": "#7BC96F",
-            "status_bar_warn": "#C7A96B",
+            "status_bar_warn": "#C73C3C",
             "status_bar_bad": "#DD4A3A",
             "status_bar_critical": "#EF5350",
-            "session_label": "#C7A96B",
+            "session_label": "#C73C3C",
             "session_border": "#6E584B",
         },
         "spinner": {
@@ -255,16 +260,16 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
 [#EB6C32]╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝[/]""",
         "banner_hero": """[#9F1C1C]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣤⣤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
 [#9F1C1C]⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣿⠟⠻⣿⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠋⠀⠀⠀⠙⢿⣷⣄⠀⠀⠀⠀⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠀⢀⣾⡿⠋⠀⠀⢠⡄⠀⠀⠙⢿⣷⡀⠀⠀⠀⠀⠀[/]
+[#C73C3C]⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠋⠀⠀⠀⠙⢿⣷⣄⠀⠀⠀⠀⠀⠀⠀[/]
+[#C73C3C]⠀⠀⠀⠀⠀⢀⣾⡿⠋⠀⠀⢠⡄⠀⠀⠙⢿⣷⡀⠀⠀⠀⠀⠀[/]
 [#DD4A3A]⠀⠀⠀⠀⣰⣿⠟⠀⠀⠀⣰⣿⣿⣆⠀⠀⠀⠻⣿⣆⠀⠀⠀⠀[/]
 [#DD4A3A]⠀⠀⠀⢰⣿⠏⠀⠀⢀⣾⡿⠉⢿⣷⡀⠀⠀⠹⣿⡆⠀⠀⠀[/]
 [#9F1C1C]⠀⠀⠀⣿⡟⠀⠀⣠⣿⠟⠀⠀⠀⠻⣿⣄⠀⠀⢻⣿⠀⠀⠀[/]
 [#9F1C1C]⠀⠀⠀⣿⡇⠀⠀⠙⠋⠀⠀⚔⠀⠀⠙⠋⠀⠀⢸⣿⠀⠀⠀[/]
 [#6B1717]⠀⠀⠀⢿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⡿⠀⠀⠀[/]
 [#6B1717]⠀⠀⠀⠘⢿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠃⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠈⠻⣿⣷⣦⣤⣀⣀⣤⣤⣶⣿⠿⠋⠀⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠀⠀⠀⠉⠛⠿⠿⠿⠿⠛⠉⠀⠀⠀⠀⠀⠀⠀[/]
+[#C73C3C]⠀⠀⠀⠀⠈⠻⣿⣷⣦⣤⣀⣀⣤⣤⣶⣿⠿⠋⠀⠀⠀⠀[/]
+[#C73C3C]⠀⠀⠀⠀⠀⠀⠀⠉⠛⠿⠿⠿⠿⠛⠉⠀⠀⠀⠀⠀⠀⠀[/]
 [#DD4A3A]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⚔⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
 [dim #6B1717]⠀⠀⠀⠀⠀⠀⠀⠀war god online⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
     },
