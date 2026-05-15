@@ -1113,6 +1113,70 @@ def _prefer_refreshable_claude_code_token(env_token: str, creds: Optional[Dict[s
     return None
 
 
+def resolve_anthropic_credential_debug_info() -> Dict[str, Any]:
+    """Return the effective Anthropic credential source without exposing the token."""
+    creds = read_claude_code_credentials()
+
+    token = os.getenv("ANTHROPIC_TOKEN", "").strip()
+    if token:
+        preferred = _prefer_refreshable_claude_code_token(token, creds)
+        if preferred:
+            return {
+                "token": preferred,
+                "source": f"claude_code:{(creds or {}).get('source', 'credentials')}",
+                "mode": "oauth/setup-token" if _is_oauth_token(preferred) else "x-api-key/other",
+                "detail": "preferred over env:ANTHROPIC_TOKEN",
+            }
+        return {
+            "token": token,
+            "source": "env:ANTHROPIC_TOKEN",
+            "mode": "oauth/setup-token" if _is_oauth_token(token) else "x-api-key/other",
+            "detail": None,
+        }
+
+    cc_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    if cc_token:
+        preferred = _prefer_refreshable_claude_code_token(cc_token, creds)
+        if preferred:
+            return {
+                "token": preferred,
+                "source": f"claude_code:{(creds or {}).get('source', 'credentials')}",
+                "mode": "oauth/setup-token" if _is_oauth_token(preferred) else "x-api-key/other",
+                "detail": "preferred over env:CLAUDE_CODE_OAUTH_TOKEN",
+            }
+        return {
+            "token": cc_token,
+            "source": "env:CLAUDE_CODE_OAUTH_TOKEN",
+            "mode": "oauth/setup-token" if _is_oauth_token(cc_token) else "x-api-key/other",
+            "detail": None,
+        }
+
+    resolved_claude_token = _resolve_claude_code_token_from_credentials(creds)
+    if resolved_claude_token:
+        return {
+            "token": resolved_claude_token,
+            "source": f"claude_code:{(creds or {}).get('source', 'credentials')}",
+            "mode": "oauth/setup-token" if _is_oauth_token(resolved_claude_token) else "x-api-key/other",
+            "detail": None,
+        }
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if api_key:
+        return {
+            "token": api_key,
+            "source": "env:ANTHROPIC_API_KEY",
+            "mode": "oauth/setup-token" if _is_oauth_token(api_key) else "x-api-key/other",
+            "detail": None,
+        }
+
+    return {
+        "token": None,
+        "source": "none",
+        "mode": "none",
+        "detail": None,
+    }
+
+
 def resolve_anthropic_token() -> Optional[str]:
     """Resolve an Anthropic token from all available sources.
 
@@ -1125,36 +1189,7 @@ def resolve_anthropic_token() -> Optional[str]:
 
     Returns the token string or None.
     """
-    creds = read_claude_code_credentials()
-
-    # 1. Hermes-managed OAuth/setup token env var
-    token = os.getenv("ANTHROPIC_TOKEN", "").strip()
-    if token:
-        preferred = _prefer_refreshable_claude_code_token(token, creds)
-        if preferred:
-            return preferred
-        return token
-
-    # 2. CLAUDE_CODE_OAUTH_TOKEN (used by Claude Code for setup-tokens)
-    cc_token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
-    if cc_token:
-        preferred = _prefer_refreshable_claude_code_token(cc_token, creds)
-        if preferred:
-            return preferred
-        return cc_token
-
-    # 3. Claude Code credential file
-    resolved_claude_token = _resolve_claude_code_token_from_credentials(creds)
-    if resolved_claude_token:
-        return resolved_claude_token
-
-    # 4. Regular API key, or a legacy OAuth token saved in ANTHROPIC_API_KEY.
-    # This remains as a compatibility fallback for pre-migration Hermes configs.
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if api_key:
-        return api_key
-
-    return None
+    return resolve_anthropic_credential_debug_info().get("token")
 
 
 def run_oauth_setup_token() -> Optional[str]:

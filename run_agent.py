@@ -1565,7 +1565,11 @@ class AIAgent:
         _provider_timeout = get_provider_request_timeout(self.provider, self.model)
 
         if self.api_mode == "anthropic_messages":
-            from agent.anthropic_adapter import build_anthropic_client, resolve_anthropic_token
+            from agent.anthropic_adapter import (
+                build_anthropic_client,
+                resolve_anthropic_credential_debug_info,
+                resolve_anthropic_token,
+            )
             # Bedrock + Claude → use AnthropicBedrock SDK for full feature parity
             # (prompt caching, thinking budgets, adaptive thinking).
             _is_bedrock_anthropic = self.provider == "bedrock"
@@ -1607,6 +1611,13 @@ class AIAgent:
                 self._client_kwargs = {}
                 if not self.quiet_mode:
                     print(f"🤖 AI Agent initialized with model: {self.model} (Anthropic native)")
+                    _auth_info = resolve_anthropic_credential_debug_info()
+                    print(
+                        f"🔐 Anthropic credential source: {_auth_info['source']} "
+                        f"({_auth_info['mode']})"
+                    )
+                    if _auth_info.get("detail"):
+                        print(f"🔐 Anthropic credential note: {_auth_info['detail']}")
                     if effective_key and len(effective_key) > 12:
                         print(f"🔑 Using token: {effective_key[:8]}...{effective_key[-4:]}")
         elif self.api_mode == "bedrock_converse":

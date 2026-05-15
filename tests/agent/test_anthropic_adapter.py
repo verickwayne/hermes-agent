@@ -21,6 +21,7 @@ from agent.anthropic_adapter import (
     is_claude_code_token_valid,
     normalize_model_name,
     read_claude_code_credentials,
+    resolve_anthropic_credential_debug_info,
     resolve_anthropic_token,
     run_oauth_setup_token,
 )
@@ -304,6 +305,74 @@ class TestResolveAnthropicToken:
         monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
 
         assert resolve_anthropic_token() == "sk-ant-oat01-static-token"
+
+
+class TestResolveAnthropicCredentialDebugInfo:
+    def test_reports_none_when_no_credentials_exist(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+
+        info = resolve_anthropic_credential_debug_info()
+
+        assert info["token"] is None
+        assert info["source"] == "none"
+        assert info["mode"] == "none"
+
+    def test_reports_api_key_env_source(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-mykey")
+        monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+
+        info = resolve_anthropic_credential_debug_info()
+
+        assert info["source"] == "env:ANTHROPIC_API_KEY"
+        assert info["mode"] == "x-api-key/other"
+        assert info["token"] == "sk-ant-api03-mykey"
+
+    def test_reports_claude_code_credential_source(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+        cred_file = tmp_path / ".claude" / ".credentials.json"
+        cred_file.parent.mkdir(parents=True)
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "cc-auto-token",
+                "refreshToken": "refresh",
+                "expiresAt": int(time.time() * 1000) + 3600_000,
+            }
+        }))
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+
+        info = resolve_anthropic_credential_debug_info()
+
+        assert info["source"] == "claude_code:claude_code_credentials_file"
+        assert info["mode"] == "oauth/setup-token"
+        assert info["token"] == "cc-auto-token"
+
+    def test_reports_when_claude_code_credentials_override_static_env_token(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_TOKEN", "sk-ant-oat01-static-token")
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+        cred_file = tmp_path / ".claude" / ".credentials.json"
+        cred_file.parent.mkdir(parents=True)
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "cc-auto-token",
+                "refreshToken": "refresh-token",
+                "expiresAt": int(time.time() * 1000) + 3600_000,
+            }
+        }))
+        monkeypatch.setattr("agent.anthropic_adapter.Path.home", lambda: tmp_path)
+
+        info = resolve_anthropic_credential_debug_info()
+
+        assert info["source"] == "claude_code:claude_code_credentials_file"
+        assert info["detail"] == "preferred over env:ANTHROPIC_TOKEN"
+        assert info["token"] == "cc-auto-token"
 
 
 class TestRefreshOauthToken:
