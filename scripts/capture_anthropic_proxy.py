@@ -206,6 +206,10 @@ class _CaptureProxyHandler(BaseHTTPRequestHandler):
         return
 
     def do_CONNECT(self) -> None:
+        # CONNECT tunnels own the socket lifecycle; after we hand off to the
+        # tunnel/MITM handler, BaseHTTPRequestHandler must not try to parse a
+        # second request from the original socket wrapper.
+        self.close_connection = True
         host, port = _split_connect_target(self.path)
         if (
             self.mode == "https-proxy"

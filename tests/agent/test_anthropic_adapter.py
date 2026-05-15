@@ -33,6 +33,14 @@ from agent.transports import get_transport
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _disable_host_claude_keychain(monkeypatch):
+    monkeypatch.setattr(
+        "agent.anthropic_adapter._read_claude_code_credentials_from_keychain",
+        lambda: None,
+    )
+
+
 class TestIsOAuthToken:
     def test_setup_token(self):
         assert _is_oauth_token("sk-ant-oat01-abcdef1234567890") is True
@@ -63,7 +71,9 @@ class TestBuildAnthropicClient:
             build_anthropic_client("sk-ant-oat01-" + "x" * 60)
             kwargs = mock_sdk.Anthropic.call_args[1]
             assert "auth_token" in kwargs
-            assert kwargs["default_headers"]["User-Agent"] == "claude-cli/2.1.87 (user, cli)"
+            assert kwargs["default_headers"]["User-Agent"] == "claude-cli/2.1.142 (external, sdk-cli)"
+            assert kwargs["default_headers"]["Anthropic-Dangerous-Direct-Browser-Access"] == "true"
+            assert kwargs["default_query"] == {"beta": "true"}
             betas = kwargs["default_headers"]["anthropic-beta"]
             assert "oauth-2025-04-20" in betas
             assert "claude-code-20250219" in betas

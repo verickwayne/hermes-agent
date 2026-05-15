@@ -580,9 +580,9 @@ def build_anthropic_client(
         # Anthropic routes OAuth requests based on user-agent and headers;
         # without Claude Code's fingerprint, requests get intermittent 500s
         # AND get billed against the third-party "extra usage" bucket instead
-        # of the user's included-quota subscription pool.  Match real Claude
-        # Code (Claude-Code-Source-Code/services/api/client.ts:105-116 +
-        # utils/http.ts:18-35) header for header.
+        # of the user's included-quota subscription pool. Match the live
+        # Claude Code subscriber request shape closely, but keep the version
+        # single-sourced with the cch/fingerprint code in curl_cffi_transport.
         #
         # The Anthropic Python SDK sets X-Stainless-Lang/Runtime headers that
         # leak "this is Python httpx, not Node" — override them to match what
@@ -590,8 +590,8 @@ def build_anthropic_client(
         # against @anthropic-ai/sdk's internal/detect-platform.mjs.
         import platform as _platform
         import uuid as _uuid
-        _NODE_SDK_VERSION = "0.96.0"   # current Anthropic Node SDK at time of patch
-        _NODE_RUNTIME_VERSION = "v22.19.0"
+        _NODE_SDK_VERSION = "0.94.0"
+        _NODE_RUNTIME_VERSION = "v24.3.0"
         all_betas = common_betas + _OAUTH_ONLY_BETAS
         # Normalize OS to Node SDK's value set: 'MacOS' / 'Linux' / 'Windows'
         _os_map = {"Darwin": "MacOS", "Linux": "Linux", "Windows": "Windows"}
@@ -600,22 +600,24 @@ def build_anthropic_client(
         _arch_map = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64"}
         _arch = _arch_map.get(_platform.machine(), _platform.machine())
         kwargs["auth_token"] = api_key
+        kwargs["default_query"] = {"beta": "true"}
         # CRITICAL: explicitly set api_key="" to suppress the Anthropic SDK's
         # env-var fallback to ANTHROPIC_API_KEY.  Without this, the SDK
         # auto-adds `x-api-key: <env-key>` ALONGSIDE the Bearer header, which
         # tells Anthropic "third-party caller with an API key" → extra-usage
         # bucket regardless of anything else.
         kwargs["api_key"] = ""
-        # Real Claude Code inference calls use the "claude-cli/<v> (user, cli)"
-        # format (utils/http.ts:getUserAgent + services/api/client.ts:107),
-        # NOT "claude-code/<v>" (that's getClaudeCodeUserAgent, used only for
-        # telemetry/bootstrap).  The (USER_TYPE, ENTRYPOINT) tuple is the
-        # routing signal — Anthropic flags "(external, cli)" as third-party.
+        # Real subscriber calls currently use the "claude-cli/<v> (external,
+        # sdk-cli)" shape plus x-app=cli and a first system block attribution
+        # with cc_entrypoint=sdk-cli. The billing attestation is versioned, so
+        # keep User-Agent and the injected system block aligned.
         kwargs["default_headers"] = {
             "anthropic-beta": ",".join(all_betas),
-            "User-Agent": f"claude-cli/{_get_claude_code_version()} (user, cli)",
+            "Anthropic-Dangerous-Direct-Browser-Access": "true",
+            "User-Agent": f"claude-cli/{_get_claude_code_version()} (external, sdk-cli)",
             "x-app": "cli",
             "X-Claude-Code-Session-Id": str(_uuid.uuid4()),
+            "X-Client-Request-Id": str(_uuid.uuid4()),
             # Suppress Python-SDK-only Stainless headers that leak runtime
             # identity even when we override the language/runtime ones.
             # Setting to None tells httpx to skip the header entirely.

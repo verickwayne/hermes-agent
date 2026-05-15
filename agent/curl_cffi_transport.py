@@ -204,7 +204,7 @@ def _emit_unredacted_routing_debug(info: dict) -> None:
 # Version we claim in the attribution field. Keep this single-sourced with the
 # OAuth User-Agent version so cc_version and User-Agent never drift apart.
 _CLAUDE_CODE_VERSION_FOR_ATTRIBUTION = CLAUDE_CODE_CLAIMED_VERSION
-_CLAUDE_CODE_ENTRYPOINT = "cli"
+_CLAUDE_CODE_ENTRYPOINT = "sdk-cli"
 
 # Hardcoded salt from Anthropic backend validation.  MUST match exactly
 # or the fingerprint check fails and Anthropic routes to extra-usage.
