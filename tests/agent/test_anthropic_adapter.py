@@ -70,7 +70,7 @@ class TestBuildAnthropicClient:
             # Native Anthropic does not get context-1m by default; accounts
             # without that beta reject even short auxiliary requests.
             assert "context-1m-2025-08-07" not in betas
-            assert "api_key" not in kwargs
+            assert kwargs["api_key"] == ""
 
     def test_oauth_drop_context_1m_beta_strips_only_1m(self):
         """drop_context_1m_beta=True strips context-1m-2025-08-07 while
@@ -376,6 +376,15 @@ class TestWriteClaudeCodeCredentials:
         data = json.loads(cred_file.read_text())
         assert data["otherField"] == "keep-me"
         assert data["claudeAiOauth"]["accessToken"] == "new-tok"
+
+    def test_honors_custom_claude_config_dir(self, tmp_path, monkeypatch):
+        custom_dir = tmp_path / "custom-claude-config"
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(custom_dir))
+        _write_claude_code_credentials("tok", "ref", 12345)
+        cred_file = custom_dir / ".credentials.json"
+        assert cred_file.exists()
+        data = json.loads(cred_file.read_text())
+        assert data["claudeAiOauth"]["accessToken"] == "tok"
 
 
 class TestResolveWithRefresh:

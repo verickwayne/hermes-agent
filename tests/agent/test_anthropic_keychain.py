@@ -1,10 +1,8 @@
 """Tests for Bug #12905 fixes in agent/anthropic_adapter.py — macOS Keychain support."""
 
+import hashlib
 import json
-import platform
 from unittest.mock import patch, MagicMock
-
-import pytest
 
 from agent.anthropic_adapter import (
     _read_claude_code_credentials_from_keychain,
@@ -91,6 +89,48 @@ class TestReadClaudeCodeCredentialsFromKeychain:
             assert creds["expiresAt"] == 9999999999999
             assert creds["source"] == "macos_keychain"
 
+    def test_reads_service_name_from_claude_config_dir(self, monkeypatch):
+        custom_dir = "/tmp/hermes-claude-config"
+        expected_hash = hashlib.sha256(custom_dir.encode("utf-8")).hexdigest()[:8]
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", custom_dir)
+        monkeypatch.setenv("USER", "verickwayne")
+
+        with patch("agent.anthropic_adapter.platform.system", return_value="Darwin"), \
+             patch("agent.anthropic_adapter.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+            assert _read_claude_code_credentials_from_keychain() is None
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == [
+            "security",
+            "find-generic-password",
+            "-a",
+            "verickwayne",
+            "-s",
+            f"Claude Code-credentials-{expected_hash}",
+            "-w",
+        ]
+
+    def test_accepts_raw_oauth_payload_shape(self):
+        with patch("agent.anthropic_adapter.platform.system", return_value="Darwin"), \
+             patch("agent.anthropic_adapter.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "access_token": "kc-access-token-abc",
+                    "refresh_token": "kc-refresh-token-xyz",
+                    "expires_at_ms": 9999999999999,
+                }),
+                stderr="",
+            )
+            creds = _read_claude_code_credentials_from_keychain()
+
+        assert creds is not None
+        assert creds["accessToken"] == "kc-access-token-abc"
+        assert creds["refreshToken"] == "kc-refresh-token-xyz"
+        assert creds["expiresAt"] == 9999999999999
+        assert creds["source"] == "macos_keychain"
+
 
 class TestReadClaudeCodeCredentialsPriority:
     """Bug 4: Keychain must be checked before the JSON file."""
@@ -163,3 +203,25 @@ class TestReadClaudeCodeCredentialsPriority:
             creds = read_claude_code_credentials()
 
         assert creds is None
+
+    def test_reads_credentials_file_from_custom_claude_config_dir(self, tmp_path, monkeypatch):
+        custom_dir = tmp_path / "custom-claude-config"
+        cred_file = custom_dir / ".credentials.json"
+        cred_file.parent.mkdir(parents=True)
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "custom-dir-token",
+                "refreshToken": "custom-dir-refresh",
+                "expiresAt": 9999999999999,
+            }
+        }))
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(custom_dir))
+
+        with patch("agent.anthropic_adapter.platform.system", return_value="Darwin"), \
+             patch("agent.anthropic_adapter.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+            creds = read_claude_code_credentials()
+
+        assert creds is not None
+        assert creds["accessToken"] == "custom-dir-token"
+        assert creds["source"] == "claude_code_credentials_file"

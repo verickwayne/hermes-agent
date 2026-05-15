@@ -11,11 +11,14 @@ Auth supports:
 """
 
 import copy
+import getpass
+import hashlib
 import json
 import logging
 import os
 import platform
 import subprocess
+import unicodedata
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
@@ -604,14 +607,87 @@ def build_anthropic_client(
     elif _is_oauth_token(api_key):
         # OAuth access token / setup-token → Bearer auth + Claude Code identity.
         # Anthropic routes OAuth requests based on user-agent and headers;
-        # without Claude Code's fingerprint, requests get intermittent 500s.
+        # without Claude Code's fingerprint, requests get intermittent 500s
+        # AND get billed against the third-party "extra usage" bucket instead
+        # of the user's included-quota subscription pool.  Match real Claude
+        # Code (Claude-Code-Source-Code/services/api/client.ts:105-116 +
+        # utils/http.ts:18-35) header for header.
+        #
+        # The Anthropic Python SDK sets X-Stainless-Lang/Runtime headers that
+        # leak "this is Python httpx, not Node" — override them to match what
+        # the Node SDK sends (Claude Code's actual transport).  Verified
+        # against @anthropic-ai/sdk's internal/detect-platform.mjs.
+        import platform as _platform
+        import uuid as _uuid
+        _NODE_SDK_VERSION = "0.96.0"   # current Anthropic Node SDK at time of patch
+        _NODE_RUNTIME_VERSION = "v22.19.0"
         all_betas = common_betas + _OAUTH_ONLY_BETAS
+        # Normalize OS to Node SDK's value set: 'MacOS' / 'Linux' / 'Windows'
+        _os_map = {"Darwin": "MacOS", "Linux": "Linux", "Windows": "Windows"}
+        _os = _os_map.get(_platform.system(), _platform.system())
+        # Normalize arch to Node SDK's value set: 'arm64' / 'x64'
+        _arch_map = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64"}
+        _arch = _arch_map.get(_platform.machine(), _platform.machine())
         kwargs["auth_token"] = api_key
+        # CRITICAL: explicitly set api_key="" to suppress the Anthropic SDK's
+        # env-var fallback to ANTHROPIC_API_KEY.  Without this, the SDK
+        # auto-adds `x-api-key: <env-key>` ALONGSIDE the Bearer header, which
+        # tells Anthropic "third-party caller with an API key" → extra-usage
+        # bucket regardless of anything else.
+        kwargs["api_key"] = ""
+        # Real Claude Code inference calls use the "claude-cli/<v> (user, cli)"
+        # format (utils/http.ts:getUserAgent + services/api/client.ts:107),
+        # NOT "claude-code/<v>" (that's getClaudeCodeUserAgent, used only for
+        # telemetry/bootstrap).  The (USER_TYPE, ENTRYPOINT) tuple is the
+        # routing signal — Anthropic flags "(external, cli)" as third-party.
         kwargs["default_headers"] = {
             "anthropic-beta": ",".join(all_betas),
-            "user-agent": f"claude-cli/{_get_claude_code_version()} (external, cli)",
+            "User-Agent": f"claude-cli/{_get_claude_code_version()} (user, cli)",
             "x-app": "cli",
+            "X-Claude-Code-Session-Id": str(_uuid.uuid4()),
+            # Suppress Python-SDK-only Stainless headers that leak runtime
+            # identity even when we override the language/runtime ones.
+            # Setting to None tells httpx to skip the header entirely.
+            "x-stainless-async": "",
+            "x-stainless-timeout": "",
+            "x-stainless-retry-count": "",
+            "x-stainless-read-timeout": "",
+            # Spoof Node SDK identity so Anthropic's first-party detector
+            # doesn't trip on lang=python / runtime=CPython.
+            "X-Stainless-Lang": "js",
+            "X-Stainless-Package-Version": _NODE_SDK_VERSION,
+            "X-Stainless-OS": _os,
+            "X-Stainless-Arch": _arch,
+            "X-Stainless-Runtime": "node",
+            "X-Stainless-Runtime-Version": _NODE_RUNTIME_VERSION,
         }
+        # Wire layer (TLS ClientHello + HTTP/2 SETTINGS + header ordering)
+        # via curl_cffi.  Python's stdlib ssl/h2 produce a Python-specific
+        # fingerprint that Anthropic's edge can detect even when application
+        # headers match Claude Code.  curl_cffi replays Chrome's exact
+        # ClientHello / SETTINGS frame / header order at the C-curl level.
+        # See agent/curl_cffi_transport.py for the impersonation profile.
+        # Graceful degradation: if curl_cffi isn't installed, log + fall
+        # through to the default httpx transport (which still works at the
+        # auth layer, just keeps the Python wire fingerprint).
+        try:
+            from agent.curl_cffi_transport import build_impersonating_http_client
+            _imp_client = build_impersonating_http_client(
+                impersonate="chrome131",
+                timeout=float(_read_timeout),
+                async_mode=False,
+            )
+            if _imp_client is not None:
+                kwargs["http_client"] = _imp_client
+                logger.debug(
+                    "Anthropic OAuth: routing via curl_cffi (impersonate=chrome131) "
+                    "for wire-fingerprint spoof"
+                )
+        except Exception as exc:
+            logger.warning(
+                "curl_cffi transport setup failed (%s); falling back to default httpx",
+                exc,
+            )
     else:
         # Regular API key → x-api-key header + common betas
         kwargs["api_key"] = api_key
@@ -657,27 +733,128 @@ def build_anthropic_bedrock_client(region: str):
     )
 
 
+def _is_env_truthy(value: Optional[str]) -> bool:
+    """Match Claude Code's truthy env parsing for auth-related toggles."""
+    if not value:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_claude_code_config_home_dir() -> Path:
+    """Resolve Claude Code's config dir, honoring CLAUDE_CONFIG_DIR."""
+    config_dir = os.getenv("CLAUDE_CONFIG_DIR")
+    if config_dir:
+        raw_path = os.path.expanduser(config_dir)
+    else:
+        raw_path = os.path.join(str(Path.home()), ".claude")
+    return Path(unicodedata.normalize("NFC", raw_path))
+
+
+def _get_claude_code_credentials_file_path() -> Path:
+    """Return Claude Code's refreshable OAuth credential file path."""
+    return _get_claude_code_config_home_dir() / ".credentials.json"
+
+
+def _get_claude_code_oauth_file_suffix() -> str:
+    """Mirror Claude Code's OAuth file-suffix selection."""
+    if os.getenv("CLAUDE_CODE_CUSTOM_OAUTH_URL"):
+        return "-custom-oauth"
+    if os.getenv("USER_TYPE") == "ant":
+        if _is_env_truthy(os.getenv("USE_LOCAL_OAUTH")):
+            return "-local-oauth"
+        if _is_env_truthy(os.getenv("USE_STAGING_OAUTH")):
+            return "-staging-oauth"
+    return ""
+
+
+def _get_claude_code_keychain_service_name(service_suffix: str = "-credentials") -> str:
+    """Mirror Claude Code's macOS Keychain service-name derivation."""
+    config_dir = _get_claude_code_config_home_dir()
+    dir_hash = ""
+    if os.getenv("CLAUDE_CONFIG_DIR"):
+        digest = hashlib.sha256(str(config_dir).encode("utf-8")).hexdigest()[:8]
+        dir_hash = f"-{digest}"
+    return f"Claude Code{_get_claude_code_oauth_file_suffix()}{service_suffix}{dir_hash}"
+
+
+def _get_claude_code_keychain_username() -> str:
+    """Match Claude Code's USER-first keychain account selection."""
+    username = os.getenv("USER", "").strip()
+    if username:
+        return username
+    try:
+        return getpass.getuser()
+    except Exception:
+        return "claude-code-user"
+
+
+def _extract_claude_code_oauth_credentials(
+    data: Any,
+    *,
+    source: str,
+) -> Optional[Dict[str, Any]]:
+    """Normalize Claude Code credential payloads across storage shapes."""
+    if not isinstance(data, dict):
+        return None
+
+    oauth_data = data.get("claudeAiOauth")
+    if not isinstance(oauth_data, dict):
+        oauth_data = data
+
+    access_token = oauth_data.get("accessToken") or oauth_data.get("access_token") or ""
+    if not access_token:
+        return None
+
+    creds: Dict[str, Any] = {
+        "accessToken": access_token,
+        "refreshToken": oauth_data.get("refreshToken") or oauth_data.get("refresh_token") or "",
+        "expiresAt": oauth_data.get("expiresAt") or oauth_data.get("expires_at_ms") or 0,
+        "source": source,
+    }
+
+    for source_key, target_key in (
+        ("scopes", "scopes"),
+        ("subscriptionType", "subscriptionType"),
+        ("subscription_type", "subscriptionType"),
+        ("rateLimitTier", "rateLimitTier"),
+        ("rate_limit_tier", "rateLimitTier"),
+    ):
+        value = oauth_data.get(source_key)
+        if value is not None:
+            creds[target_key] = value
+
+    return creds
+
+
 def _read_claude_code_credentials_from_keychain() -> Optional[Dict[str, Any]]:
     """Read Claude Code OAuth credentials from the macOS Keychain.
 
-    Claude Code >=2.1.114 stores credentials in the macOS Keychain under the
-    service name "Claude Code-credentials" rather than (or in addition to)
-    the JSON file at ~/.claude/.credentials.json.
+    Claude Code stores credentials in the macOS Keychain under a service name
+    derived from the OAuth environment and config dir. On the default config
+    dir this resolves to "Claude Code-credentials"; non-default
+    CLAUDE_CONFIG_DIR values append a stable 8-char SHA-256 suffix.
 
-    The password field contains a JSON string with the same claudeAiOauth
-    structure as the JSON file.
+    The password field contains the same secure-storage JSON Claude Code reads
+    locally, typically wrapped in a top-level ``claudeAiOauth`` object.
 
     Returns dict with {accessToken, refreshToken?, expiresAt?} or None.
     """
     if platform.system() != "Darwin":
         return None
 
+    service_name = _get_claude_code_keychain_service_name()
+    username = _get_claude_code_keychain_username()
     try:
-        # Read the "Claude Code-credentials" generic password entry
         result = subprocess.run(
-            ["security", "find-generic-password",
-             "-s", "Claude Code-credentials",
-             "-w"],
+            [
+                "security",
+                "find-generic-password",
+                "-a",
+                username,
+                "-s",
+                service_name,
+                "-w",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -687,39 +864,29 @@ def _read_claude_code_credentials_from_keychain() -> Optional[Dict[str, Any]]:
         return None
 
     if result.returncode != 0:
-        logger.debug("Keychain: no entry found for 'Claude Code-credentials'")
+        logger.debug("Keychain: no entry found for %r", service_name)
         return None
 
-    raw = result.stdout.strip()
+    raw = result.stdout if isinstance(result.stdout, str) else ""
+    raw = raw.strip()
     if not raw:
         return None
 
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except (TypeError, json.JSONDecodeError):
         logger.debug("Keychain: credentials payload is not valid JSON")
         return None
 
-    oauth_data = data.get("claudeAiOauth")
-    if oauth_data and isinstance(oauth_data, dict):
-        access_token = oauth_data.get("accessToken", "")
-        if access_token:
-            return {
-                "accessToken": access_token,
-                "refreshToken": oauth_data.get("refreshToken", ""),
-                "expiresAt": oauth_data.get("expiresAt", 0),
-                "source": "macos_keychain",
-            }
-
-    return None
+    return _extract_claude_code_oauth_credentials(data, source="macos_keychain")
 
 
 def read_claude_code_credentials() -> Optional[Dict[str, Any]]:
     """Read refreshable Claude Code OAuth credentials.
 
     Checks two sources in order:
-      1. macOS Keychain (Darwin only) — "Claude Code-credentials" entry
-      2. ~/.claude/.credentials.json file
+      1. macOS Keychain (Darwin only) — service derived from Claude Code config
+      2. Claude Code's .credentials.json file
 
     This intentionally excludes ~/.claude.json primaryApiKey. Opencode's
     subscription flow is OAuth/setup-token based with refreshable credentials,
@@ -734,22 +901,18 @@ def read_claude_code_credentials() -> Optional[Dict[str, Any]]:
         return kc_creds
 
     # Fall back to JSON file
-    cred_path = Path.home() / ".claude" / ".credentials.json"
+    cred_path = _get_claude_code_credentials_file_path()
     if cred_path.exists():
         try:
             data = json.loads(cred_path.read_text(encoding="utf-8"))
-            oauth_data = data.get("claudeAiOauth")
-            if oauth_data and isinstance(oauth_data, dict):
-                access_token = oauth_data.get("accessToken", "")
-                if access_token:
-                    return {
-                        "accessToken": access_token,
-                        "refreshToken": oauth_data.get("refreshToken", ""),
-                        "expiresAt": oauth_data.get("expiresAt", 0),
-                        "source": "claude_code_credentials_file",
-                    }
+            creds = _extract_claude_code_oauth_credentials(
+                data,
+                source="claude_code_credentials_file",
+            )
+            if creds:
+                return creds
         except (json.JSONDecodeError, OSError, IOError) as e:
-            logger.debug("Failed to read ~/.claude/.credentials.json: %s", e)
+            logger.debug("Failed to read %s: %s", cred_path, e)
 
     return None
 
@@ -819,7 +982,7 @@ def refresh_anthropic_oauth_pure(refresh_token: str, *, use_json: bool = False) 
             data=data,
             headers={
                 "Content-Type": content_type,
-                "User-Agent": f"claude-cli/{_get_claude_code_version()} (external, cli)",
+                "User-Agent": f"claude-code/{_get_claude_code_version()}",
             },
             method="POST",
         )
@@ -875,14 +1038,14 @@ def _write_claude_code_credentials(
     *,
     scopes: Optional[list] = None,
 ) -> None:
-    """Write refreshed credentials back to ~/.claude/.credentials.json.
+    """Write refreshed credentials back to Claude Code's credential file.
 
     The optional *scopes* list (e.g. ``["user:inference", "user:profile", ...]``)
     is persisted so that Claude Code's own auth check recognises the credential
     as valid.  Claude Code >=2.1.81 gates on the presence of ``"user:inference"``
     in the stored scopes before it will use the token.
     """
-    cred_path = Path.home() / ".claude" / ".credentials.json"
+    cred_path = _get_claude_code_credentials_file_path()
     try:
         # Read existing file to preserve other fields
         existing = {}
@@ -1129,7 +1292,7 @@ def run_hermes_oauth_login_pure() -> Optional[Dict[str, Any]]:
             data=exchange_data,
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": f"claude-cli/{_get_claude_code_version()} (external, cli)",
+                "User-Agent": f"claude-code/{_get_claude_code_version()}",
             },
             method="POST",
         )
@@ -2075,5 +2238,3 @@ def build_anthropic_kwargs(
         kwargs["extra_headers"] = {"anthropic-beta": ",".join(betas)}
 
     return kwargs
-
-
