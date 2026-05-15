@@ -70,8 +70,28 @@ def main(argv: list[str]) -> int:
         print("usage: compare_anthropic_routing.py HERMES_LOG CLAUDE_CAPTURE_JSON", file=sys.stderr)
         return 2
 
-    hermes = _load_hermes_log(Path(argv[1]))
-    claude = _load_claude_capture(Path(argv[2]))
+    hermes_path = Path(argv[1])
+    claude_path = Path(argv[2])
+    if not hermes_path.exists():
+        print(f"Hermes routing log not found: {hermes_path}", file=sys.stderr)
+        return 2
+    if not claude_path.exists():
+        print(
+            "\n".join(
+                [
+                    f"Claude capture not found: {claude_path}",
+                    "No live Claude Code comparison was possible.",
+                    "For Claude Code subscriber sessions, ANTHROPIC_BASE_URL alone does not redirect",
+                    "the main Anthropic client request path, so a simple forwarding server will not",
+                    "produce this capture file.",
+                ]
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    hermes = _load_hermes_log(hermes_path)
+    claude = _load_claude_capture(claude_path)
     diffs = _compare(hermes, claude)
     if not diffs:
         print("No routing diffs detected.")
