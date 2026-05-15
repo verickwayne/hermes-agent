@@ -440,6 +440,7 @@ class CurlCffiTransport(httpx.BaseTransport):
                 # curl_cffi uses 'data=' (requests-style), not 'content=' (httpx-style)
                 data=body,
                 impersonate=self._impersonate,
+                default_headers=False,
                 stream=False,  # materialize body; httpx streams from memory
                 allow_redirects=False,
                 verify=True,
@@ -498,6 +499,7 @@ class AsyncCurlCffiTransport(httpx.AsyncBaseTransport):
                 headers=headers,
                 data=body,
                 impersonate=self._impersonate,
+                default_headers=False,
                 stream=False,
                 allow_redirects=False,
                 verify=True,

@@ -1,11 +1,14 @@
 import json
+from types import SimpleNamespace
 
 from agent.curl_cffi_transport import (
+    CurlCffiTransport,
     _build_unredacted_routing_debug_info,
     _inject_billing_attribution,
     _routing_debug_log_path,
     emit_anthropic_routing_debug,
 )
+import httpx
 
 
 def test_routing_debug_info_reports_injected_attribution_and_cch():
@@ -76,3 +79,36 @@ def test_emit_anthropic_routing_debug_writes_default_or_overridden_log(tmp_path,
     assert "transport=curl_cffi(chrome131)" in captured.out
     assert _routing_debug_log_path() == str(log_path)
     assert "transport=curl_cffi(chrome131)" in log_path.read_text(encoding="utf-8")
+
+
+def test_sync_transport_disables_curl_cffi_default_browser_headers():
+    captured = {}
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def request(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                status_code=200,
+                headers={},
+                content=b"{}",
+            )
+
+    transport = CurlCffiTransport()
+    transport._session_cls = _FakeSession
+
+    request = httpx.Request(
+        "POST",
+        "https://api.anthropic.com/v1/messages?beta=true",
+        headers={"Authorization": "Bearer test-token"},
+        content=b'{"messages":[{"role":"user","content":"hello"}]}',
+    )
+    response = transport.handle_request(request)
+
+    assert response.status_code == 200
+    assert captured["default_headers"] is False
