@@ -112,3 +112,5 @@ def test_sync_transport_disables_curl_cffi_default_browser_headers():
 
     assert response.status_code == 200
     assert captured["default_headers"] is False
+    assert captured["accept_encoding"] == "gzip, deflate, br, zstd"
+    assert captured["impersonate"] == "chrome131"

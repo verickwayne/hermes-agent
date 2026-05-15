@@ -73,15 +73,16 @@ class TestBuildAnthropicClient:
             assert "auth_token" in kwargs
             assert kwargs["default_headers"]["User-Agent"] == "claude-cli/2.1.142 (external, sdk-cli)"
             assert kwargs["default_headers"]["Anthropic-Dangerous-Direct-Browser-Access"] == "true"
+            assert kwargs["default_headers"]["x-stainless-timeout"] == "600"
+            assert kwargs["default_headers"]["x-stainless-retry-count"] == "0"
             assert kwargs["default_query"] == {"beta": "true"}
             betas = kwargs["default_headers"]["anthropic-beta"]
             assert "oauth-2025-04-20" in betas
             assert "claude-code-20250219" in betas
             assert "interleaved-thinking-2025-05-14" in betas
-            assert "fine-grained-tool-streaming-2025-05-14" in betas
-            # Native Anthropic does not get context-1m by default; accounts
-            # without that beta reject even short auxiliary requests.
-            assert "context-1m-2025-08-07" not in betas
+            assert "context-1m-2025-08-07" in betas
+            assert "context-management-2025-06-27" in betas
+            assert "fine-grained-tool-streaming-2025-05-14" not in betas
             assert kwargs["api_key"] == ""
 
     def test_oauth_drop_context_1m_beta_strips_only_1m(self):
@@ -99,7 +100,8 @@ class TestBuildAnthropicClient:
             assert "oauth-2025-04-20" in betas
             assert "claude-code-20250219" in betas
             assert "interleaved-thinking-2025-05-14" in betas
-            assert "fine-grained-tool-streaming-2025-05-14" in betas
+            assert "context-management-2025-06-27" in betas
+            assert "fine-grained-tool-streaming-2025-05-14" not in betas
 
     def test_api_key_uses_api_key(self):
         with patch("agent.anthropic_adapter._anthropic_sdk") as mock_sdk:
@@ -1092,8 +1094,8 @@ class TestBuildAnthropicKwargs:
         )
         assert kwargs["model"] == "claude-sonnet-4-20250514"
 
-    def test_fast_mode_oauth_default_omits_context_1m_beta(self):
-        """Default OAuth fast-mode avoids context-1m for subscriptions without it."""
+    def test_fast_mode_oauth_default_includes_current_claude_betas(self):
+        """Fast mode on OAuth keeps the captured Claude beta surface plus fast-mode."""
         kwargs = build_anthropic_kwargs(
             model="claude-opus-4-6",
             messages=[{"role": "user", "content": "Hi"}],
@@ -1106,7 +1108,8 @@ class TestBuildAnthropicKwargs:
         betas = kwargs["extra_headers"]["anthropic-beta"]
         assert "fast-mode-2026-02-01" in betas
         assert "oauth-2025-04-20" in betas
-        assert "context-1m-2025-08-07" not in betas
+        assert "context-1m-2025-08-07" in betas
+        assert "context-management-2025-06-27" in betas
 
     def test_fast_mode_oauth_drop_context_1m_beta_strips_only_1m(self):
         """drop_context_1m_beta=True strips context-1m from fast-mode

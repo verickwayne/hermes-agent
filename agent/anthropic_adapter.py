@@ -279,11 +279,21 @@ _CONTEXT_1M_BETA = "context-1m-2025-08-07"
 # See https://platform.claude.com/docs/en/build-with-claude/fast-mode
 _FAST_MODE_BETA = "fast-mode-2026-02-01"
 
-# Additional beta headers required for OAuth/subscription auth.
-# Matches what Claude Code (and pi-ai / OpenCode) send.
-_OAUTH_ONLY_BETAS = [
+# Current Claude Code subscriber beta surface captured on 2026-05-15.
+# Keep this ordered to match live first-party traffic as closely as practical.
+_CLAUDE_CODE_OAUTH_BETAS = [
     "claude-code-20250219",
     "oauth-2025-04-20",
+    "context-1m-2025-08-07",
+    "interleaved-thinking-2025-05-14",
+    "context-management-2025-06-27",
+    "prompt-caching-scope-2026-01-05",
+    "advisor-tool-2026-03-01",
+    "advanced-tool-use-2025-11-20",
+    "effort-2025-11-24",
+    "afk-mode-2026-01-31",
+    "extended-cache-ttl-2025-04-11",
+    "cache-diagnosis-2026-04-07",
 ]
 
 _CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
@@ -492,6 +502,18 @@ def _common_betas_for_base_url(
     return betas
 
 
+def _oauth_betas_for_base_url(
+    base_url: str | None,
+    *,
+    drop_context_1m_beta: bool = False,
+) -> list[str]:
+    """Return the Claude Code beta surface Hermes should mimic for OAuth."""
+    betas = list(_CLAUDE_CODE_OAUTH_BETAS)
+    if drop_context_1m_beta:
+        betas = [b for b in betas if b != _CONTEXT_1M_BETA]
+    return betas
+
+
 def build_anthropic_client(
     api_key: str,
     base_url: str = None,
@@ -592,7 +614,10 @@ def build_anthropic_client(
         import uuid as _uuid
         _NODE_SDK_VERSION = "0.94.0"
         _NODE_RUNTIME_VERSION = "v24.3.0"
-        all_betas = common_betas + _OAUTH_ONLY_BETAS
+        all_betas = _oauth_betas_for_base_url(
+            normalized_base_url,
+            drop_context_1m_beta=drop_context_1m_beta,
+        )
         # Normalize OS to Node SDK's value set: 'MacOS' / 'Linux' / 'Windows'
         _os_map = {"Darwin": "MacOS", "Linux": "Linux", "Windows": "Windows"}
         _os = _os_map.get(_platform.system(), _platform.system())
@@ -622,9 +647,9 @@ def build_anthropic_client(
             # identity even when we override the language/runtime ones.
             # Setting to None tells httpx to skip the header entirely.
             "x-stainless-async": "",
-            "x-stainless-timeout": "",
-            "x-stainless-retry-count": "",
             "x-stainless-read-timeout": "",
+            "x-stainless-timeout": "600",
+            "x-stainless-retry-count": "0",
             # Spoof Node SDK identity so Anthropic's first-party detector
             # doesn't trip on lang=python / runtime=CPython.
             "X-Stainless-Lang": "js",
@@ -2248,7 +2273,10 @@ def build_anthropic_kwargs(
             drop_context_1m_beta=drop_context_1m_beta,
         ))
         if is_oauth:
-            betas.extend(_OAUTH_ONLY_BETAS)
+            betas = _oauth_betas_for_base_url(
+                base_url,
+                drop_context_1m_beta=drop_context_1m_beta,
+            )
         betas.append(_FAST_MODE_BETA)
         kwargs["extra_headers"] = {"anthropic-beta": ",".join(betas)}
 

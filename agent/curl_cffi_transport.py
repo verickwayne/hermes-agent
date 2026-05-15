@@ -366,9 +366,7 @@ def _inject_billing_attribution(body_bytes: bytes) -> bytes:
 # because the SDK adds them per-request after merge).
 _HEADERS_TO_STRIP = {
     "x-stainless-async",          # Python-SDK-only; "false"/"true"
-    "x-stainless-timeout",        # Python-SDK-only; per-request value
     "x-stainless-read-timeout",   # Python-SDK-only; per-request value
-    "x-stainless-retry-count",    # Python-SDK-only; per-request value
 }
 
 
@@ -390,6 +388,9 @@ def _scrub_request_headers(headers: dict) -> dict:
             continue
         # Drop empty / leaked x-api-key; OAuth Bearer is in Authorization.
         if k_lower == "x-api-key":
+            continue
+        # Let curl_cffi emit the captured Node/Claude Accept-Encoding value.
+        if k_lower == "accept-encoding":
             continue
         cleaned[k] = v
     return cleaned
@@ -439,6 +440,7 @@ class CurlCffiTransport(httpx.BaseTransport):
                 headers=headers,
                 # curl_cffi uses 'data=' (requests-style), not 'content=' (httpx-style)
                 data=body,
+                accept_encoding="gzip, deflate, br, zstd",
                 impersonate=self._impersonate,
                 default_headers=False,
                 stream=False,  # materialize body; httpx streams from memory
@@ -498,6 +500,7 @@ class AsyncCurlCffiTransport(httpx.AsyncBaseTransport):
                 url=str(request.url),
                 headers=headers,
                 data=body,
+                accept_encoding="gzip, deflate, br, zstd",
                 impersonate=self._impersonate,
                 default_headers=False,
                 stream=False,
