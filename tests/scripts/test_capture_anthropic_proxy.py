@@ -38,3 +38,21 @@ def test_build_capture_record_handles_non_json_body():
     )
 
     assert record["first_system_block"] is None
+
+
+def test_split_connect_target_defaults_to_443():
+    mod = _load_capture_proxy_module()
+
+    assert mod._split_connect_target("api.anthropic.com") == ("api.anthropic.com", 443)
+    assert mod._split_connect_target("api.anthropic.com:443") == ("api.anthropic.com", 443)
+
+
+def test_build_proxy_env_contains_proxy_and_ca_bundle():
+    mod = _load_capture_proxy_module()
+
+    env = mod._build_proxy_env("http://127.0.0.1:8787", "/tmp/hermes-anthropic-mitm/ca.pem")
+
+    assert env["HTTPS_PROXY"] == "http://127.0.0.1:8787"
+    assert env["https_proxy"] == "http://127.0.0.1:8787"
+    assert env["SSL_CERT_FILE"] == "/tmp/hermes-anthropic-mitm/ca.pem"
+    assert env["NODE_EXTRA_CA_CERTS"] == "/tmp/hermes-anthropic-mitm/ca.pem"
