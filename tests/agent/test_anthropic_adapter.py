@@ -63,6 +63,7 @@ class TestBuildAnthropicClient:
             build_anthropic_client("sk-ant-oat01-" + "x" * 60)
             kwargs = mock_sdk.Anthropic.call_args[1]
             assert "auth_token" in kwargs
+            assert kwargs["default_headers"]["User-Agent"] == "claude-cli/2.1.87 (user, cli)"
             betas = kwargs["default_headers"]["anthropic-beta"]
             assert "oauth-2025-04-20" in betas
             assert "claude-code-20250219" in betas

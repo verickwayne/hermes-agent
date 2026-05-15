@@ -21,6 +21,7 @@ import subprocess
 import unicodedata
 from pathlib import Path
 
+from agent.claude_code_identity import CLAUDE_CODE_CLAIMED_VERSION
 from hermes_constants import get_hermes_home
 from typing import Any, Dict, List, Optional, Tuple
 from utils import base_url_host_matches, normalize_proxy_env_vars
@@ -285,49 +286,13 @@ _OAUTH_ONLY_BETAS = [
     "oauth-2025-04-20",
 ]
 
-# Claude Code identity — required for OAuth requests to be routed correctly.
-# Without these, Anthropic's infrastructure intermittently 500s OAuth traffic.
-# The version must stay reasonably current — Anthropic rejects OAuth requests
-# when the spoofed user-agent version is too far behind the actual release.
-_CLAUDE_CODE_VERSION_FALLBACK = "2.1.74"
-_claude_code_version_cache: Optional[str] = None
-
-
-def _detect_claude_code_version() -> str:
-    """Detect the installed Claude Code version, fall back to a static constant.
-
-    Anthropic's OAuth infrastructure validates the user-agent version and may
-    reject requests with a version that's too old.  Detecting dynamically means
-    users who keep Claude Code updated never hit stale-version 400s.
-    """
-    import subprocess as _sp
-
-    for cmd in ("claude", "claude-code"):
-        try:
-            result = _sp.run(
-                [cmd, "--version"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                # Output is like "2.1.74 (Claude Code)" or just "2.1.74"
-                version = result.stdout.strip().split()[0]
-                if version and version[0].isdigit():
-                    return version
-        except Exception:
-            pass
-    return _CLAUDE_CODE_VERSION_FALLBACK
-
-
 _CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 _MCP_TOOL_PREFIX = "mcp_"
 
 
 def _get_claude_code_version() -> str:
-    """Lazily detect the installed Claude Code version when OAuth headers need it."""
-    global _claude_code_version_cache
-    if _claude_code_version_cache is None:
-        _claude_code_version_cache = _detect_claude_code_version()
-    return _claude_code_version_cache
+    """Return the Claude Code version Hermes claims for OAuth routing."""
+    return CLAUDE_CODE_CLAIMED_VERSION
 
 
 def _is_oauth_token(key: str) -> bool:

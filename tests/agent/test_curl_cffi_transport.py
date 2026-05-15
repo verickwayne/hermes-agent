@@ -37,6 +37,7 @@ def test_routing_debug_info_reports_injected_attribution_and_cch():
     assert info["system_block_count"] == 2
     assert info["attribution_injected"] is True
     assert info["first_system_block"].startswith("x-anthropic-billing-header: ")
+    assert "cc_version=2.1.87." in info["first_system_block"]
     assert info["cch"] is not None
     assert len(info["cch"]) == 5
     assert info["cch_replaced"] is True

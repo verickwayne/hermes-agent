@@ -58,6 +58,8 @@ from typing import Any, Optional
 
 import httpx
 
+from agent.claude_code_identity import CLAUDE_CODE_CLAIMED_VERSION
+
 logger = logging.getLogger(__name__)
 _ROUTING_DEBUG_ENV_VAR = "HERMES_ANTHROPIC_ROUTING_DEBUG"
 _ROUTING_DEBUG_LOG_ENV_VAR = "HERMES_ANTHROPIC_ROUTING_DEBUG_FILE"
@@ -199,14 +201,9 @@ def _emit_unredacted_routing_debug(info: dict) -> None:
 # Format (from constants/system.ts:91):
 #   x-anthropic-billing-header: cc_version=<v>.<fingerprint>; cc_entrypoint=<entry>;
 # Optional fields: cch=<attestation>; cc_workload=<tag>;
-# Version we CLAIM in the cc_version attribution field.  Deliberately
-# pinned to 2.1.87 — the version paoloanzn/free-code (working open-source
-# cch impl, see PR #9) ships in its package.json, paired with the seed
-# _CCH_SEED below.  Anthropic's attestation algorithm may rotate seeds
-# per release, so this is the version-seed pair we know is accepted.
-# Note: this is INDEPENDENT of _get_claude_code_version (the locally
-# installed Claude Code CLI version), which we don't need to match here.
-_CLAUDE_CODE_VERSION_FOR_ATTRIBUTION = "2.1.87"
+# Version we claim in the attribution field. Keep this single-sourced with the
+# OAuth User-Agent version so cc_version and User-Agent never drift apart.
+_CLAUDE_CODE_VERSION_FOR_ATTRIBUTION = CLAUDE_CODE_CLAIMED_VERSION
 _CLAUDE_CODE_ENTRYPOINT = "cli"
 
 # Hardcoded salt from Anthropic backend validation.  MUST match exactly
@@ -223,8 +220,7 @@ _FINGERPRINT_SALT = "59cf53e54c78"
 # with `xxhash64(body_bytes, seed) & 0xFFFFF` formatted as 5-char hex.
 #
 # Seed extracted from disassembled Bun binary by ssslomp / a10k.co.
-# See a10k.co/b/reverse-engineering-claude-code-cch.html.  Constants
-# change per CC release; this is the value paired with version 2.1.142.
+# See a10k.co/b/reverse-engineering-claude-code-cch.html.
 _CCH_SEED = 0x6E52736AC806831E
 _CCH_PLACEHOLDER = b"cch=00000"
 
