@@ -1844,6 +1844,7 @@ class AIAgent:
             self._fallback_chain = [fallback_model]
         else:
             self._fallback_chain = []
+        self._ensure_openrouter_nemotron_fallback()
         self._fallback_index = 0
         self._fallback_activated = getattr(self, "_fallback_activated", False)
         # Legacy attribute kept for backward compat (tests, external callers)
@@ -8718,6 +8719,40 @@ class AIAgent:
         return result["response"]
 
     # ── Provider fallback ──────────────────────────────────────────────────
+
+    def _ensure_openrouter_nemotron_fallback(self) -> None:
+        """Add a tool-capable Nemotron fallback for OpenRouter Super.
+
+        OpenRouter's Nemotron Super route is served by a small set of
+        upstreams that can all return transient 429s at once.  The Nano route
+        has the same OpenRouter chat-completions shape, supports tools and
+        reasoning, and currently has a healthier tool-capable DeepInfra
+        endpoint.  Keep user-configured fallbacks first; this is only a final
+        safety net so autonomous work does not die on Super route exhaustion.
+        """
+        provider = (getattr(self, "provider", "") or "").strip().lower()
+        model = (getattr(self, "model", "") or "").strip().lower()
+        if provider != "openrouter":
+            return
+        if model not in {
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+        }:
+            return
+
+        fallback = {
+            "provider": "openrouter",
+            "model": "nvidia/nemotron-3-nano-30b-a3b",
+            "reason": "auto_nemotron_super_route_exhaustion",
+        }
+        for entry in self._fallback_chain:
+            if not isinstance(entry, dict):
+                continue
+            entry_provider = (entry.get("provider") or "").strip().lower()
+            entry_model = (entry.get("model") or "").strip().lower()
+            if entry_provider == fallback["provider"] and entry_model == fallback["model"]:
+                return
+        self._fallback_chain.append(fallback)
 
     def _try_activate_fallback(self, reason: "FailoverReason | None" = None) -> bool:
         """Switch to the next fallback model/provider in the chain.

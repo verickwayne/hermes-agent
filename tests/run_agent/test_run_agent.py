@@ -4231,6 +4231,78 @@ class TestAnthropicImageFallback:
         assert mock_vision.await_count == 1
 
 
+class TestOpenRouterNemotronFallback:
+    def test_nemotron_super_adds_nano_fallback(self):
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+        ):
+            a = AIAgent(
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                provider="openrouter",
+                model="nvidia/nemotron-3-super-120b-a12b",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert a._fallback_chain[-1] == {
+            "provider": "openrouter",
+            "model": "nvidia/nemotron-3-nano-30b-a3b",
+            "reason": "auto_nemotron_super_route_exhaustion",
+        }
+
+    def test_nemotron_super_preserves_configured_fallback_first(self):
+        configured = {"provider": "anthropic", "model": "claude-opus-4-8"}
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+        ):
+            a = AIAgent(
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                provider="openrouter",
+                model="nvidia/nemotron-3-super-120b-a12b:free",
+                fallback_model=configured,
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert a._fallback_chain[0] == configured
+        assert a._fallback_chain[1]["model"] == "nvidia/nemotron-3-nano-30b-a3b"
+
+    def test_nemotron_nano_does_not_add_self_fallback(self):
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+        ):
+            a = AIAgent(
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                provider="openrouter",
+                model="nvidia/nemotron-3-nano-30b-a3b",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert a._fallback_chain == []
+
+
 class TestFallbackAnthropicProvider:
     """Bug fix: _try_activate_fallback had no case for anthropic provider."""
 
