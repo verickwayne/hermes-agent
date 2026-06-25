@@ -14416,6 +14416,55 @@ class AIAgent:
                             primary_recovery_attempted = True
                             retry_count = 0
                             continue
+                        # Large Anthropic streaming requests can repeatedly
+                        # surface as a plain APIConnectionError instead of an
+                        # explicit context/payload error. Once the normal
+                        # retry loop and one client rebuild have both failed,
+                        # shrink the request before fallback/give-up rather
+                        # than resending the same giant cached prompt.
+                        _large_anthropic_transport_failure = (
+                            classified.reason == FailoverReason.timeout
+                            and self.compression_enabled
+                            and self.api_mode == "anthropic_messages"
+                            and (getattr(self, "provider", "") or "").lower() == "anthropic"
+                            and not getattr(api_error, "status_code", None)
+                            and approx_tokens >= 180_000
+                            and self.context_compressor is not None
+                        )
+                        if _large_anthropic_transport_failure:
+                            compression_attempts += 1
+                            if compression_attempts <= max_compression_attempts:
+                                original_len = len(messages)
+                                self._emit_status(
+                                    f"🗜️ Large Anthropic stream failed at "
+                                    f"~{approx_tokens:,} tokens — compressing "
+                                    f"({compression_attempts}/{max_compression_attempts})..."
+                                )
+                                messages, active_system_prompt = self._compress_context(
+                                    messages, system_message,
+                                    approx_tokens=approx_tokens,
+                                    task_id=effective_task_id,
+                                )
+                                # Compression creates a new session; clear the
+                                # old history reference so persistence writes
+                                # the compressed conversation to the new session.
+                                conversation_history = None
+                                if len(messages) < original_len:
+                                    self._emit_status(
+                                        f"🗜️ Compressed {original_len} → "
+                                        f"{len(messages)} messages after "
+                                        "transport failure, retrying..."
+                                    )
+                                    retry_count = 0
+                                    primary_recovery_attempted = False
+                                    restart_with_compressed_messages = True
+                                    break
+                                logger.warning(
+                                    "%sLarge Anthropic transport recovery "
+                                    "could not reduce messages (%d -> %d); "
+                                    "falling through to fallback.",
+                                    self.log_prefix, original_len, len(messages),
+                                )
                         # Try fallback before giving up entirely
                         self._emit_status(f"⚠️ Max retries ({max_retries}) exhausted — trying fallback...")
                         if self._try_activate_fallback():
