@@ -20,6 +20,7 @@ from agent.skill_utils import (
     extract_skill_description,
     get_all_skills_dirs,
     get_disabled_skill_names,
+    get_skills_prompt_max_chars,
     iter_skill_index_files,
     parse_frontmatter,
     skill_matches_platform,
@@ -1019,13 +1020,15 @@ def build_skills_system_prompt(
         or ""
     )
     disabled = get_disabled_skill_names()
+    prompt_max_chars = get_skills_prompt_max_chars()
     cache_key = (
         str(skills_dir.resolve()),
         tuple(str(d) for d in external_dirs),
-        tuple(sorted(str(t) for t in (available_tools or set()))),
-        tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
+        tuple(sorted(str(t) for t in available_tools)) if available_tools is not None else None,
+        tuple(sorted(str(ts) for ts in available_toolsets)) if available_toolsets is not None else None,
         _platform_hint,
         tuple(sorted(disabled)),
+        prompt_max_chars,
     )
     with _SKILLS_PROMPT_CACHE_LOCK:
         cached = _SKILLS_PROMPT_CACHE.get(cache_key)
@@ -1208,6 +1211,26 @@ def build_skills_system_prompt(
             "\n"
             "Only proceed without loading a skill if genuinely none are relevant to the task."
         )
+
+    # Keep small catalogs unchanged. A large catalog may be deferred only when
+    # both discovery and loading are available; never hide the only access path.
+    can_discover = available_tools is None or {"skills_list", "skill_view"} <= set(available_tools)
+    if prompt_max_chars and len(result) > prompt_max_chars and can_discover:
+        count = sum(len(set(name for name, _ in entries)) for entries in skills_by_category.values())
+        result = (
+            "## Skills (on demand)\n"
+            f"{count} eligible skills are indexed locally. Before a specialized task, "
+            "call skills_list(query='task keywords') to find relevant workflows, then "
+            "skill_view(name) to load and follow the matching instructions. "
+            "Use category to browse and next_offset to retrieve subsequent pages; "
+            "an empty query browses every available skill. Do not assume an unlisted "
+            "skill is unavailable. For Hermes configuration or troubleshooting, load "
+            "hermes-agent first. Full skill contents and linked files remain available "
+            "through skill_view. Update incorrect instructions with skill_manage.\n"
+        )
+        categories = ", ".join(sorted(skills_by_category))
+        if len(result) + len(categories) + 14 <= prompt_max_chars:
+            result += f"Categories: {categories}\n"
 
     # ── Store in LRU cache ────────────────────────────────────────────
     with _SKILLS_PROMPT_CACHE_LOCK:

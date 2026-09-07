@@ -118,6 +118,22 @@ def skill_matches_platform(frontmatter: Dict[str, Any]) -> bool:
 # ── Disabled skills ───────────────────────────────────────────────────────
 
 
+def get_skills_prompt_max_chars() -> int:
+    """Profile-local threshold for switching to on-demand skill discovery.
+
+    Zero keeps the complete index. Invalid values use the default; a very small
+    budget still needs room for the discovery instructions.
+    """
+    try:
+        config = yaml_load(get_config_path().read_text(encoding="utf-8")) or {}
+        value = config.get("skills", {}).get("prompt_max_chars", 6000)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return max(1000, value) if value else 0
+    except Exception:
+        pass
+    return 6000
+
+
 def get_disabled_skill_names(platform: str | None = None) -> Set[str]:
     """Read disabled skill names from config.yaml.
 

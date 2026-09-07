@@ -254,6 +254,30 @@ class TestBuildSkillsSystemPrompt:
         result = build_skills_system_prompt()
         assert result == ""
 
+    def test_large_index_defers_only_with_discovery_and_loading_tools(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        for i in range(50):
+            directory = tmp_path / "skills" / f"skill-{i}"
+            directory.mkdir(parents=True)
+            (directory / "SKILL.md").write_text(
+                f"---\nname: skill-{i}\ndescription: {'Useful workflow. ' * 15}\n---\n"
+            )
+        available = {"skills_list", "skill_view"}
+        compact = build_skills_system_prompt(available_tools=available)
+        assert len(compact) <= 6000
+        assert "skills_list(query=" in compact
+        assert "50 eligible skills" in compact
+        assert build_skills_system_prompt(available_tools=available) == compact
+        # Unspecified tools mean unrestricted discovery; an explicitly empty
+        # tool set must not reuse that compact cached prompt.
+        assert "skills_list(query=" in build_skills_system_prompt()
+        for tools in ({"skill_view"}, {"skills_list"}, set()):
+            assert "skill-49" in build_skills_system_prompt(available_tools=tools)
+        (tmp_path / "config.yaml").write_text("skills:\n  prompt_max_chars: 0\n")
+        complete = build_skills_system_prompt(available_tools=available)
+        assert len(complete) > 6000
+        assert "skill-49" in complete
+
     def test_builds_index_with_skills(self, monkeypatch, tmp_path):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         skills_dir = tmp_path / "skills" / "coding" / "python-debug"
@@ -1186,6 +1210,4 @@ class TestOpenAIModelExecutionGuidance:
 # =========================================================================
 # Budget warning history stripping
 # =========================================================================
-
-
 

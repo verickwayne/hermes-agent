@@ -671,9 +671,10 @@ def _load_category_description(category_dir: Path) -> Optional[str]:
         return None
 
 
-def skills_list(category: str = None, task_id: str = None) -> str:
+def skills_list(category: str = None, task_id: str = None, *, query: str = "",
+                limit: int = 10, offset: int = 0) -> str:
     """
-    List all available skills (progressive disclosure tier 1 - minimal metadata).
+    Search or browse available skills, with bounded, lossless pagination.
 
     Returns only name + description to minimize token usage. Use skill_view() to
     load full content, tags, related files, etc.
@@ -686,17 +687,13 @@ def skills_list(category: str = None, task_id: str = None) -> str:
         JSON string with minimal skill info: name, description, category
     """
     try:
+        if not isinstance(query, str):
+            return tool_error("query must be a string", success=False)
+        if (isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50
+                or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0):
+            return tool_error("limit must be 1..50 and offset must be nonnegative", success=False)
         if not SKILLS_DIR.exists():
             SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-            return json.dumps(
-                {
-                    "success": True,
-                    "skills": [],
-                    "categories": [],
-                    "message": f"No skills found. Skills directory created at {display_hermes_home()}/skills/",
-                },
-                ensure_ascii=False,
-            )
 
         # Find all skills
         all_skills = _find_all_skills()
@@ -719,21 +716,49 @@ def skills_list(category: str = None, task_id: str = None) -> str:
         # Sort by category then name
         all_skills = _sort_skills(all_skills)
 
-        # Extract unique categories
-        categories = sorted(
-            {s.get("category") for s in all_skills if s.get("category")}
-        )
+        # Metadata only: discovery never executes a skill's inline shell or
+        # loads its body into the model context. Native loading handles that.
+        terms = set(re.findall(r"[^\W_]+", query.casefold()))
+        if terms:
+            ranked = []
+            for skill in all_skills:
+                name = skill["name"].casefold()
+                name_terms = set(re.findall(r"[^\W_]+", name))
+                other_terms = set(re.findall(r"[^\W_]+", (
+                    skill.get("description", "") + " " + (skill.get("category") or "")
+                ).casefold()))
+                score = 5 * len(terms & name_terms) + len(terms & other_terms)
+                if name == query.strip().casefold():
+                    score += 100
+                if score:
+                    ranked.append((score, skill))
+            all_skills = [s for _, s in sorted(ranked, key=lambda x: -x[0])]
 
-        return json.dumps(
-            {
+        # Extract unique categories
+        page = []
+        def encode():
+            end = offset + len(page)
+            return json.dumps({
                 "success": True,
-                "skills": all_skills,
-                "categories": categories,
-                "count": len(all_skills),
+                "skills": page,
+                "categories": sorted({s["category"] for s in page if s.get("category")}),
+                "count": len(page),
+                "total": len(all_skills),
+                "offset": offset,
+                "next_offset": end if end < len(all_skills) else None,
                 "hint": "Use skill_view(name) to see full content, tags, and linked files",
-            },
-            ensure_ascii=False,
-        )
+            }, ensure_ascii=False)
+        for skill in all_skills[offset:offset + limit]:
+            item = dict(skill)
+            item["description"] = item.get("description", "")[:320]
+            # Categories can be nested filesystem paths. Bound metadata without
+            # modifying the canonical skill name used by skill_view.
+            item["category"] = (item.get("category") or "")[:200]
+            page.append(item)
+            if len(encode()) > 6000:
+                page.pop()
+                break
+        return encode()
 
     except Exception as e:
         return tool_error(str(e), success=False)
@@ -1489,14 +1514,17 @@ if __name__ == "__main__":
 
 SKILLS_LIST_SCHEMA = {
     "name": "skills_list",
-    "description": "List available skills (name + description). Use skill_view(name) to load full content.",
+    "description": "Search local skill names/descriptions by task keywords, or browse with category. Results are paginated; use next_offset for more. Use skill_view(name) to load full instructions.",
     "parameters": {
         "type": "object",
         "properties": {
             "category": {
                 "type": "string",
                 "description": "Optional category filter to narrow results",
-            }
+            },
+            "query": {"type": "string", "description": "Task keywords; omit to browse all skills"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Page size, default 10; output capped at 6000 characters"},
+            "offset": {"type": "integer", "minimum": 0, "description": "Start offset from the previous next_offset"},
         },
         "required": [],
     },
@@ -1526,7 +1554,8 @@ registry.register(
     toolset="skills",
     schema=SKILLS_LIST_SCHEMA,
     handler=lambda args, **kw: skills_list(
-        category=args.get("category"), task_id=kw.get("task_id")
+        category=args.get("category"), task_id=kw.get("task_id"),
+        query=args.get("query", ""), limit=args.get("limit", 10), offset=args.get("offset", 0)
     ),
     check_fn=check_skills_requirements,
     emoji="📚",
@@ -1564,4 +1593,3 @@ registry.register(
     check_fn=check_skills_requirements,
     emoji="📚",
 )
-

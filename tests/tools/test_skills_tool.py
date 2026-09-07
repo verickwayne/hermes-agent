@@ -288,6 +288,36 @@ class TestFindAllSkills:
 
 
 class TestSkillsList:
+    def test_pagination_preserves_every_skill_with_bounded_output(self, tmp_path):
+        for i in range(37):
+            _make_skill(tmp_path, f"skill-{i:02d}")
+        names, offset = [], 0
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            while offset is not None:
+                raw = skills_list(limit=50, offset=offset)
+                assert len(raw) <= 6000
+                page = json.loads(raw)
+                assert page["total"] == 37
+                names.extend(s["name"] for s in page["skills"])
+                offset = page["next_offset"]
+        assert len(names) == len(set(names)) == 37
+
+    def test_search_ranks_exact_name_and_can_load_result(self, tmp_path):
+        _make_skill(tmp_path, "finance", body="Specific finance workflow.")
+        _make_skill(tmp_path, "finance-report")
+        _make_skill(tmp_path, "gardening")
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            result = json.loads(skills_list(query="finance"))
+            assert result["total"] == 2
+            assert result["skills"][0]["name"] == "finance"
+            loaded = json.loads(skill_view(result["skills"][0]["name"]))
+            assert "Specific finance workflow." in loaded["content"]
+            assert json.loads(skills_list(query="unmatchedword"))["total"] == 0
+
+    def test_invalid_pagination_returns_tool_error(self):
+        for kwargs in ({"limit": 0}, {"limit": 51}, {"offset": -1}, {"query": []}):
+            assert json.loads(skills_list(**kwargs))["success"] is False
+
     def test_empty_creates_directory(self, tmp_path):
         skills_dir = tmp_path / "skills"
         with patch("tools.skills_tool.SKILLS_DIR", skills_dir):
