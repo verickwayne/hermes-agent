@@ -5,9 +5,20 @@ shared slash-command pipeline (`/model` in CLI/gateway/Telegram) historically
 only looked at `providers:`.
 """
 
+import pytest
+
 import hermes_cli.providers as providers_mod
 from hermes_cli.model_switch import list_authenticated_providers, switch_model
 from hermes_cli.providers import resolve_provider_full
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_model_catalogs(monkeypatch):
+    """Picker unit tests must not query the developer's local endpoints.
+
+    Tests that exercise successful discovery replace this stub explicitly.
+    """
+    monkeypatch.setattr("hermes_cli.models.fetch_api_models", lambda *args, **kwargs: [])
 
 
 _MOCK_VALIDATION = {

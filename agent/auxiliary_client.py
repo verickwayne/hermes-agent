@@ -714,12 +714,19 @@ class _CodexCompletionsAdapter:
         total_timeout = timeout if isinstance(timeout, (int, float)) and timeout > 0 else None
         deadline = time.monotonic() + float(total_timeout) if total_timeout else None
         timed_out = threading.Event()
+        timeout_cleanup_started = threading.Event()
         timeout_timer: Optional[threading.Timer] = None
 
         def _timeout_message() -> str:
             return f"Codex auxiliary Responses stream exceeded {float(total_timeout):.1f}s total timeout"
 
         def _close_client_on_timeout() -> None:
+            # The timer and the synchronous deadline check may race.  Make
+            # cleanup idempotent so either path closes and evicts the client,
+            # while only one performs the work.
+            if timeout_cleanup_started.is_set():
+                return
+            timeout_cleanup_started.set()
             timed_out.set()
             close = getattr(self._client, "close", None)
             if callable(close):
@@ -740,7 +747,10 @@ class _CodexCompletionsAdapter:
 
         def _check_cancelled() -> None:
             if deadline is not None and time.monotonic() >= deadline:
-                timed_out.set()
+                # A busy stream can prevent Timer scheduling long enough for
+                # this check to win.  A timeout must always close the transport
+                # and evict its cached wrapper before returning to callers.
+                _close_client_on_timeout()
                 raise TimeoutError(_timeout_message())
             try:
                 from tools.interrupt import is_interrupted

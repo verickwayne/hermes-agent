@@ -15,11 +15,14 @@ _SSH_USER = os.getenv("TERMINAL_SSH_USER", "")
 _SSH_PORT = int(os.getenv("TERMINAL_SSH_PORT", "22"))
 _SSH_KEY = os.getenv("TERMINAL_SSH_KEY", "")
 
-_has_ssh = bool(_SSH_HOST and _SSH_USER)
+_has_ssh = (
+    os.getenv("HERMES_RUN_SSH_INTEGRATION", "").strip().lower() in {"1", "true", "yes"}
+    and bool(_SSH_HOST and _SSH_USER)
+)
 
 requires_ssh = pytest.mark.skipif(
     not _has_ssh,
-    reason="TERMINAL_SSH_HOST / TERMINAL_SSH_USER not set",
+    reason="set HERMES_RUN_SSH_INTEGRATION=1 plus TERMINAL_SSH_HOST / TERMINAL_SSH_USER",
 )
 
 
@@ -44,6 +47,7 @@ class TestBuildSSHCommand:
                                                       stderr=iter([]),
                                                       stdin=MagicMock()))
         monkeypatch.setattr("tools.environments.base.time.sleep", lambda _: None)
+        monkeypatch.setattr(SSHEnvironment, "init_session", lambda self: None)
 
     def test_base_flags(self):
         env = SSHEnvironment(host="h", user="u")
@@ -86,6 +90,7 @@ class TestControlSocketPath:
                                                       stderr=iter([]),
                                                       stdin=MagicMock()))
         monkeypatch.setattr("tools.environments.base.time.sleep", lambda _: None)
+        monkeypatch.setattr(SSHEnvironment, "init_session", lambda self: None)
 
     # SSH appends ``.XXXXXXXXXXXXXXXX`` (17 bytes) to the ControlPath in
     # ControlMaster mode; the macOS sun_path field is 104 bytes including

@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import hermes_cli.main as main_module
 
 from hermes_cli.main import (
     _UpdateOutputStream,
@@ -213,8 +214,10 @@ class TestInstallHangupProtection:
         try:
             # On Windows (no SIGHUP) we still wrap stdio and create the log.
             assert state["installed"] is True
-            assert isinstance(sys.stdout, _UpdateOutputStream)
-            assert isinstance(sys.stderr, _UpdateOutputStream)
+            # Other tests reload hermes_cli.main.  Use its current class
+            # object rather than the class imported during collection.
+            assert isinstance(sys.stdout, main_module._UpdateOutputStream)
+            assert isinstance(sys.stderr, main_module._UpdateOutputStream)
             assert state["log_file"] is not None
 
             sys.stdout.write("checking mirror\n")

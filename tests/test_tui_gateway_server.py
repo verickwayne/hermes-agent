@@ -3976,10 +3976,9 @@ def test_browser_manage_connect_default_local_reports_launch_hint(monkeypatch):
         resp["result"]["messages"][0]
         == "Chrome isn't running with remote debugging — attempting to launch..."
     )
-    assert any(
-        "No Chrome/Chromium executable was found" in line
-        for line in resp["result"]["messages"]
-    )
+    # macOS can use `open -a` even when no executable was found in the
+    # usual application paths; keep that actionable fallback intact.
+    assert any("open -a \"Google Chrome\"" in line for line in resp["result"]["messages"])
     assert any(
         "--remote-debugging-port=9222" in line for line in resp["result"]["messages"]
     )

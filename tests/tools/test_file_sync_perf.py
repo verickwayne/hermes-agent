@@ -27,6 +27,8 @@ def local_env():
 @pytest.fixture
 def ssh_env():
     import os
+    if os.environ.get("HERMES_RUN_SSH_INTEGRATION", "").strip().lower() not in {"1", "true", "yes"}:
+        pytest.skip("set HERMES_RUN_SSH_INTEGRATION=1 to run external SSH performance tests")
     host = os.environ.get("TERMINAL_SSH_HOST")
     user = os.environ.get("TERMINAL_SSH_USER")
     if not host or not user:
